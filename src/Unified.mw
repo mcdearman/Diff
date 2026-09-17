@@ -1,0 +1,75 @@
+-- Unified diffs, as `diff -u` and `git diff` print them: the crate's
+-- `src/udiff.rs`.
+--
+-- Copyright Armin Ronacher, Pierre-Étienne Meunier and Brandon Williams, and
+-- the Meadow port's authors. Licensed under Apache-2.0: see LICENSE and
+-- COPYRIGHT.
+
+use Std.Collections.Vector as V
+use diff.Types
+use diff.Text (TextDiff, groupedOps, endsWithNewline, diffLines, textDiffConfig, TextDiffConfig)
+
+-- How to print a text diff as a unified diff.
+@pub record UnifiedDiff = {
+  diff : TextDiff,
+  -- How many unchanged lines to show around each change.
+  contextRadius : Int,
+  -- Whether a last line without a newline gets `\ No newline at end of file`.
+  missingNewlineHint : Bool,
+  -- The `---` and `+++` file names, if any.
+  header : Maybe (String, String)
+}
+
+-- The crate's defaults: three lines of context, the hint, no header.
+@pub fun unifiedDiff (d : TextDiff) =
+  UnifiedDiff { diff = d, contextRadius = 3, missingNewlineHint = True, header = None }
+
+-- A hunk's range, as `start,length`, or `start` alone for one line.
+fun hunkRange start stop =
+  let len = if stop > start then stop - start else 0 in
+  if len == 1 then "${start + 1}" else "${if len == 0 then start else start + 1},${len}"
+
+-- The `@@ -a,b +c,d @@` line for a hunk of `ops`.
+@pub fun hunkHeader ops =
+  let first = V.getOr (DiffOp.Equal 0 0 0) ops 0 in
+  let last = V.getOr (DiffOp.Equal 0 0 0) ops (V.len ops - 1) in
+  let old = hunkRange (fst (oldRange first)) (snd (oldRange last)) in
+  let new = hunkRange (fst (newRange first)) (snd (newRange last)) in
+  "@@ -${old} +${new} @@"
+
+-- The operations of each hunk.
+@pub fun hunks (u : UnifiedDiff) = V.filter (\ops -> not (V.isEmpty ops)) (groupedOps u.diff u.contextRadius)
+
+-- One hunk as text.
+@pub fun hunkText (u : UnifiedDiff) ops =
+  let d = u.diff in
+  let changes = V.concatMap (\op -> changesOf op d.old d.new) ops in
+  let hint = if u.missingNewlineHint then "\n\\ No newline at end of file" else "" in
+  let lineOf = \(c : Change String) ->
+    let body = tagSymbol c.tag ++ c.value in
+    if not d.newlineTerminated
+    then body ++ "\n"
+    else if endsWithNewline c.value
+    then body
+    else body ++ hint ++ "\n"
+  in
+  if V.isEmpty changes
+  then ""
+  else concatStrings (V.toArray (V.pushFront (V.map lineOf changes) (hunkHeader ops ++ "\n")))
+
+-- The whole unified diff as text: the header, if there is one and anything
+-- changed, and every hunk.
+@pub fun unifiedDiffText (u : UnifiedDiff) =
+  let parts = V.map (\ops -> hunkText u ops) (hunks u) in
+  let head =
+    match u.header with
+    | Just (a, b) -> if V.isEmpty parts then "" else "--- ${a}\n+++ ${b}\n"
+    | None -> ""
+  in
+  head ++ concatStrings (V.toArray parts)
+
+-- `old` and `new` diffed by lines with `alg`, as a unified diff with `n` lines
+-- of context and, if given, a header naming the two files.
+@pub fun unifiedDiffOf alg old new n header =
+  let d = diffLines { textDiffConfig | algorithm = alg } old new in
+  unifiedDiffText { unifiedDiff d | contextRadius = n, header = header }

@@ -1,0 +1,30 @@
+-- diff: differences between sequences and texts -- Myers, patience and LCS --
+-- with unified diffs and inline changes. A port of Rust's `similar` crate,
+-- version 2.7.0, with its `text`, `inline` and `unicode` features.
+--
+--   use diff (fromLines, unifiedDiff, unifiedDiffText)
+--
+--   unifiedDiffText (unifiedDiff (fromLines "a\nb\nc\n" "a\nB\nc\n"))
+--     -- "@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n"
+
+mod Types
+mod Algorithms
+mod Text
+mod Unified
+mod Inline
+mod Parts
+@cfg(test)
+mod Cases
+@cfg(test)
+mod CasesPlain
+@cfg(test)
+mod Tests
+
+@pub use diff.Types (Algorithm, ChangeTag, tagSymbol, DiffTag, DiffOp, asTagTuple, opTag)
+@pub use diff.Types (oldRange, newRange, Change, changesOf, slicesOf)
+@pub use diff.Types.Algorithm.*
+@pub use diff.Algorithms (captureDiff, captureDiffSlices, getDiffRatio, groupDiffOps)
+@pub use diff.Text
+@pub use diff.Unified
+@pub use diff.Inline
+@pub use diff.Parts

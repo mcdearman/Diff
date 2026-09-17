@@ -1,0 +1,119 @@
+-- The crate's types: algorithms, operations and changes (`src/types.rs`).
+--
+-- Copyright Armin Ronacher, Pierre-Étienne Meunier and Brandon Williams, and
+-- the Meadow port's authors. Licensed under Apache-2.0: see LICENSE and
+-- COPYRIGHT.
+
+use Std.Collections.Vector as V
+
+-- How to find the differences.
+@pub data Algorithm =
+  -- Myers' O(ND) algorithm: the shortest edit script.
+  Myers
+  -- Patience diff: lines that occur once on each side anchor the rest, which
+  -- tends to line up blocks of code the way a person would.
+  | Patience
+  -- The longest common subsequence, by dynamic programming.
+  | Lcs
+
+-- What happened to one element.
+@pub data ChangeTag = Equal | Delete | Insert
+
+-- The prefix a unified diff gives a line with this tag.
+@pub fun tagSymbol t =
+  match t with
+  | ChangeTag.Equal -> " "
+  | ChangeTag.Delete -> "-"
+  | ChangeTag.Insert -> "+"
+
+-- What an operation does.
+@pub data DiffTag = Equal | Delete | Insert | Replace
+
+-- One step of a diff, in the crate's terms.
+@pub data DiffOp =
+  -- `Equal oldIndex newIndex len`: `len` elements the same on both sides.
+  Equal Int Int Int
+  -- `Delete oldIndex oldLen newIndex`: `oldLen` elements gone from the old side.
+  | Delete Int Int Int
+  -- `Insert oldIndex newIndex newLen`: `newLen` elements new on the new side.
+  | Insert Int Int Int
+  -- `Replace oldIndex oldLen newIndex newLen`: old elements replaced by new ones.
+  | Replace Int Int Int Int
+
+-- The operation's tag, and its old and new ranges as `(start, end)`.
+@pub fun asTagTuple op =
+  match op with
+  | DiffOp.Equal o n l -> (DiffTag.Equal, (o, o + l), (n, n + l))
+  | DiffOp.Delete o ol n -> (DiffTag.Delete, (o, o + ol), (n, n))
+  | DiffOp.Insert o n nl -> (DiffTag.Insert, (o, o), (n, n + nl))
+  | DiffOp.Replace o ol n nl -> (DiffTag.Replace, (o, o + ol), (n, n + nl))
+
+@pub fun opTag op =
+  match asTagTuple op with
+  | (t, _, _) -> t
+
+-- The old elements the operation covers, as `(start, end)`.
+@pub fun oldRange op =
+  match asTagTuple op with
+  | (_, r, _) -> r
+
+-- The new elements the operation covers, as `(start, end)`.
+@pub fun newRange op =
+  match asTagTuple op with
+  | (_, _, r) -> r
+
+@pub(pkg) fun isEmptyOp op =
+  match asTagTuple op with
+  | (_, (a, b), (c, d)) -> a >= b and c >= d
+
+-- `op` with `offset` added to both indices and `len` to its lengths.
+fun adjust op offset len =
+  match op with
+  | DiffOp.Equal o n l -> DiffOp.Equal (o + offset) (n + offset) (l + len)
+  | DiffOp.Delete o ol n -> DiffOp.Delete (o + offset) (ol + len) (n + offset)
+  | DiffOp.Insert o n nl -> DiffOp.Insert (o + offset) (n + offset) (nl + len)
+  | DiffOp.Replace o ol n nl -> DiffOp.Replace (o + offset) (ol + len) (n + offset) (nl + len)
+
+@pub(pkg) fun shiftLeft op k = adjust op (0 - k) 0
+
+@pub(pkg) fun shiftRight op k = adjust op k 0
+
+@pub(pkg) fun growLeft op k = adjust op (0 - k) k
+
+@pub(pkg) fun growRight op k = adjust op 0 k
+
+@pub(pkg) fun shrinkLeft op k = adjust op 0 (0 - k)
+
+@pub(pkg) fun shrinkRight op k = adjust op k (0 - k)
+
+-- One element's part in a diff: its tag, where it is on each side, and the
+-- element.
+@pub record Change a = { tag : ChangeTag, oldIndex : Maybe Int, newIndex : Maybe Int, value : a }
+
+-- The changes an operation stands for, element by element: the crate's
+-- `iter_changes`.
+@pub fun changesOf op (old : #[a]) (new : #[a]) =
+  let change = \tag oi ni value -> Change { tag = tag, oldIndex = oi, newIndex = ni, value = value } in
+  let equal = \o n l ->
+    V.map (\k -> change ChangeTag.Equal (Just (o + k)) (Just (n + k)) (arrayGet old (o + k))) (V.range 0 l)
+  in
+  let deleted = \o l ->
+    V.map (\k -> change ChangeTag.Delete (Just (o + k)) None (arrayGet old (o + k))) (V.range 0 l)
+  in
+  let inserted = \n l ->
+    V.map (\k -> change ChangeTag.Insert None (Just (n + k)) (arrayGet new (n + k))) (V.range 0 l)
+  in
+  match op with
+  | DiffOp.Equal o n l -> equal o n l
+  | DiffOp.Delete o l _ -> deleted o l
+  | DiffOp.Insert _ n l -> inserted n l
+  | DiffOp.Replace o ol n nl -> V.append (deleted o ol) (inserted n nl)
+
+-- The runs of elements an operation stands for: the crate's `iter_slices`.
+@pub fun slicesOf op (old : #[a]) (new : #[a]) =
+  let part = \xs from len -> arraySlice xs from (from + len) in
+  match op with
+  | DiffOp.Equal o _ l -> [(ChangeTag.Equal, part old o l)]
+  | DiffOp.Delete o l _ -> [(ChangeTag.Delete, part old o l)]
+  | DiffOp.Insert _ n l -> [(ChangeTag.Insert, part new n l)]
+  | DiffOp.Replace o ol n nl -> [(ChangeTag.Delete, part old o ol), (ChangeTag.Insert, part new n nl)]

@@ -1,0 +1,8 @@
+diff (the Meadow package) is a port of the Rust crate similar
+(https://github.com/mitsuhiko/similar), version 2.7.0, by Armin Ronacher,
+Pierre-Étienne Meunier, Brandon Williams and contributors, to Meadow. Its test
+cases are generated from that crate, and its code is translated from the
+crate's source.
+
+The crate is licensed under the Apache License, Version 2.0, and so is this
+port: see LICENSE.

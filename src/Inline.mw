@@ -1,0 +1,152 @@
+-- Inline changes: within a replaced run of lines, which words changed. The
+-- crate's `src/text/inline.rs`.
+--
+-- Copyright Armin Ronacher, Pierre-Étienne Meunier and Brandon Williams, and
+-- the Meadow port's authors. Licensed under Apache-2.0: see LICENSE and
+-- COPYRIGHT.
+
+use Std.Collections.Vector as V
+use diff.Types
+use diff.Algorithms (captureWith, getDiffRatio)
+use diff.Text (TextDiff, tokenizeUnicodeWords, tokenizeWords, tokenizeLinesAndNewlines, endsWithNewline)
+
+-- One line of a replaced run, with its pieces marked: `True` for a piece that
+-- changed.
+@pub record InlineChange = {
+  tag : ChangeTag,
+  oldIndex : Maybe Int,
+  newIndex : Maybe Int,
+  values : [(Bool, String)]
+}
+
+-- Whether the line lacks a line ending.
+@pub fun inlineMissingNewline (c : InlineChange) =
+  match V.get c.values (V.len c.values - 1) with
+  | Just (_, s) -> not (endsWithNewline s)
+  | None -> False
+
+-- The line with changed pieces wrapped in `-` or `+`, as the crate displays it.
+@pub fun inlineChangeText (c : InlineChange) =
+  let marker =
+    match c.tag with
+    | ChangeTag.Delete -> "-"
+    | ChangeTag.Insert -> "+"
+    | ChangeTag.Equal -> ""
+  in
+  let pieces = V.map (\p -> match p with | (emph, s) -> if emph then marker ++ s ++ marker else s) c.values in
+  concatStrings (V.toArray pieces) ++ (if inlineMissingNewline c then "\n" else "")
+
+def minRatio = toFloat32 0.5
+
+fun inlineChange tag oldIndex newIndex values =
+  InlineChange { tag = tag, oldIndex = oldIndex, newIndex = newIndex, values = values }
+
+fun plain (ch : Change String) = inlineChange ch.tag ch.oldIndex ch.newIndex [(False, ch.value)]
+
+-- The words of several strings, each with which string it is from and where.
+fun multiLookup tokenize (strings : #[String]) =
+  V.toArray
+    (V.concatMap
+      (\si ->
+        let words = tokenize (arrayGet strings si) in
+        snd
+          (V.foldl
+            (\acc w -> match acc with | (offset, out) -> (offset + stringByteLength w, V.pushBack out (w, si, offset)))
+            (0, V.empty)
+            words))
+      (V.range 0 (arrayLen strings)))
+
+-- The words from `idx` for `len`, joined into one piece per string they came
+-- from: the crate's `get_original_slices`.
+fun originalSlices (strings : #[String]) seqs idx len =
+  let flush = \last out ->
+    match last with
+    | Just (si, start, l) -> V.pushBack out (si, stringSlice (arrayGet strings si) start (start + l))
+    | None -> out
+  in
+  let step = \acc k ->
+    match acc with
+    | (last, out) ->
+        match arrayGet seqs (idx + k) with
+        | (s, si, offset) ->
+            match last with
+            | Just (lsi, start, l) ->
+                if lsi == si
+                then (Just (si, start, l + stringByteLength s), out)
+                else (Just (si, offset, stringByteLength s), flush last out)
+            | None -> (Just (si, offset, stringByteLength s), out)
+  in
+  match V.foldl step (None, V.empty) (V.range 0 len) with
+  | (last, out) -> flush last out
+
+-- `values` with `s` added to line `idx`: split at line endings, and marked,
+-- if it is emphasized.
+fun pushValues values idx emphasized s =
+  let grown = if V.len values > idx then values else V.append values (V.replicate (idx + 1 - V.len values) V.empty) in
+  let added =
+    if emphasized
+    then V.map (\seg -> (not (endsWithNewline seg), seg)) (tokenizeLinesAndNewlines s)
+    else [(False, s)]
+  in
+  V.set grown idx (V.append (V.getOr V.empty grown idx) added)
+
+fun upperSeqRatio len1 len2 =
+  let n = len1 + len2 in
+  if n == 0
+  then toFloat32 1.0
+  else toFloat32 2.0 *. toFloat32 (toFloat (if len1 < len2 then len1 else len2)) /. toFloat32 (toFloat n)
+
+-- The inline changes of `op`, splitting lines into words with `tokenize`.
+@pub fun inlineChangesWith tokenize (d : TextDiff) op =
+  match asTagTuple op with
+  | (DiffTag.Replace, (oa, ob), (na, nb)) ->
+      let fallback = V.map plain (changesOf op d.old d.new) in
+      if upperSeqRatio (ob - oa) (nb - na) <. minRatio
+      then fallback
+      else
+        let oldSlices = arraySlice d.old oa ob in
+        let newSlices = arraySlice d.new na nb in
+        let oldSeqs = multiLookup tokenize oldSlices in
+        let newSeqs = multiLookup tokenize newSlices in
+        let word = \seqs i -> match arrayGet seqs i with | (w, _, _) -> w in
+        let same = \i j -> word oldSeqs i == word newSeqs j in
+        let ops =
+          captureWith Algorithm.Patience same (word oldSeqs) (word newSeqs) 0 (arrayLen oldSeqs) 0 (arrayLen newSeqs)
+        in
+        if getDiffRatio ops (arrayLen oldSeqs) (arrayLen newSeqs) <. minRatio
+        then fallback
+        else
+          let add = \values slices emphasized ->
+            V.foldl (\vs p -> match p with | (si, s) -> pushValues vs si emphasized s) values slices
+          in
+          let olderSlices = \i l -> originalSlices oldSlices oldSeqs i l in
+          let newerSlices = \i l -> originalSlices newSlices newSeqs i l in
+          let step = \acc o ->
+            match acc with
+            | (olds, news) ->
+                match o with
+                | DiffOp.Equal oi ni l -> (add olds (olderSlices oi l) False, add news (newerSlices ni l) False)
+                | DiffOp.Delete oi l _ -> (add olds (olderSlices oi l) True, news)
+                | DiffOp.Insert _ ni l -> (olds, add news (newerSlices ni l) True)
+                | DiffOp.Replace oi ol ni nl -> (add olds (olderSlices oi ol) True, add news (newerSlices ni nl) True)
+          in
+          (match V.foldl step (V.empty, V.empty) ops with
+           | (olds, news) ->
+               let deleted =
+                 let line = \k -> V.getOr V.empty olds k in
+                 V.map (\k -> inlineChange ChangeTag.Delete (Just (oa + k)) None (line k)) (V.range 0 (V.len olds))
+               in
+               let inserted =
+                 let line = \k -> V.getOr V.empty news k in
+                 V.map (\k -> inlineChange ChangeTag.Insert None (Just (na + k)) (line k)) (V.range 0 (V.len news))
+               in
+               V.append deleted inserted)
+  | _ -> V.map plain (changesOf op d.old d.new)
+
+-- The inline changes of `op`, by Unicode word bounds, as the crate with its
+-- `unicode` feature finds them.
+@pub fun iterInlineChanges d op = inlineChangesWith tokenizeUnicodeWords d op
+
+-- The inline changes of `op`, by runs of whitespace and non-whitespace, as the
+-- crate without its `unicode` feature finds them.
+@pub fun iterInlineChangesByWords d op = inlineChangesWith tokenizeWords d op

@@ -1,0 +1,20 @@
+[package]
+name = "generate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+# The crate is built twice: with `unicode`, as the port's default word and
+# grapheme tokenizers expect, and without, for inline changes by plain words.
+[features]
+default = ["unicode"]
+unicode = ["similar/unicode"]
+
+[dependencies]
+similar = { version = "=2.7.0", default-features = false, features = ["text", "inline"] }
+unicode-segmentation = "=1.13.3"
+
+[build-dependencies]
+serde_json = "1"

@@ -1,0 +1,254 @@
+-- Diffing text: the crate's `TextDiff` and its tokenizers (`src/text/`), and
+-- close matches.
+--
+-- Copyright Armin Ronacher, Pierre-Étienne Meunier and Brandon Williams, and
+-- the Meadow port's authors. Licensed under Apache-2.0: see LICENSE and
+-- COPYRIGHT.
+
+use Std.Collections.Vector as V
+use Std.Collections.HashMap as H
+use Std.String as S
+use Std.Sort (sortBy)
+use unicodeSegmentation (splitWordBounds, graphemes)
+use diff.Types
+use diff.Algorithms (captureWith, getDiffRatio, groupDiffOps)
+
+-- --- tokenizers -------------------------------------------------------------------------
+
+fun utf8Len c =
+  let cp = charCode c in
+  if cp < 0x80 then 1 else if cp < 0x800 then 2 else if cp < 0x10000 then 3 else 4
+
+-- Rust's `char::is_whitespace`.
+@pub(pkg) fun isWhitespace c =
+  let cp = charCode c in
+  (cp >= 9 and cp <= 13)
+    or cp == 32
+    or cp == 0x85
+    or cp == 0xA0
+    or cp == 0x1680
+    or (cp >= 0x2000 and cp <= 0x200A)
+    or cp == 0x2028
+    or cp == 0x2029
+    or cp == 0x202F
+    or cp == 0x205F
+    or cp == 0x3000
+
+fun isNewline c = charCode c == 13 or charCode c == 10
+
+-- The characters of `s` with their byte offsets.
+fun indexed s =
+  let cs = stringToChars s in
+  let rec go i at acc =
+    if i >= arrayLen cs then acc else go (i + 1) (at + utf8Len (arrayGet cs i)) (V.pushBack acc (at, arrayGet cs i))
+  in
+  V.toArray (go 0 0 V.empty)
+
+-- `s` cut into maximal runs of characters that `kind` puts in the same class.
+fun runsBy kind s =
+  let cs = indexed s in
+  let n = arrayLen cs in
+  let rec go i start out =
+    if i >= n
+    then (if start < n then V.pushBack out (stringSlice s (fst (arrayGet cs start)) (stringByteLength s)) else out)
+    else if i > start and kind (snd (arrayGet cs i)) != kind (snd (arrayGet cs start))
+    then go (i + 1) i (V.pushBack out (stringSlice s (fst (arrayGet cs start)) (fst (arrayGet cs i))))
+    else go (i + 1) start out
+  in
+  go 0 0 V.empty
+
+-- Lines, each with its line ending: `\n`, `\r\n` or a lone `\r`.
+@pub fun tokenizeLines s =
+  let n = stringByteLength s in
+  let byte = \i -> toInt (stringByteAt s i) in
+  let rec go i last out =
+    if i >= n
+    then (if last < n then V.pushBack out (stringSlice s last n) else out)
+    else if byte i == 13
+    then
+      if i + 1 < n and byte (i + 1) == 10
+      then go (i + 2) (i + 2) (V.pushBack out (stringSlice s last (i + 2)))
+      else go (i + 1) (i + 1) (V.pushBack out (stringSlice s last (i + 1)))
+    else if byte i == 10
+    then go (i + 1) (i + 1) (V.pushBack out (stringSlice s last (i + 1)))
+    else go (i + 1) last out
+  in
+  go 0 0 V.empty
+
+-- Runs of line-ending characters, and runs of anything else.
+@pub fun tokenizeLinesAndNewlines s = runsBy isNewline s
+
+-- Runs of whitespace, and runs of anything else.
+@pub fun tokenizeWords s = runsBy isWhitespace s
+
+-- Each character on its own.
+@pub fun tokenizeChars s = V.map (\c -> charsToString #[c]) (V.fromArray (stringToChars s))
+
+-- The pieces between UAX #29 word boundaries.
+@pub fun tokenizeUnicodeWords s = splitWordBounds s
+
+-- Extended grapheme clusters.
+@pub fun tokenizeGraphemes s = graphemes True s
+
+-- Whether `s` ends with `\r` or `\n`.
+@pub fun endsWithNewline s =
+  let n = stringByteLength s in
+  n > 0 and (toInt (stringByteAt s (n - 1)) == 10 or toInt (stringByteAt s (n - 1)) == 13)
+
+-- --- text diffs -------------------------------------------------------------------------
+
+@pub record TextDiffConfig = {
+  algorithm : Algorithm,
+  -- Whether each token carries its own line ending. `None` leaves it to the
+  -- tokenizer: lines do, everything else does not.
+  newlineTerminated : Maybe Bool
+}
+
+@pub def textDiffConfig = TextDiffConfig { algorithm = Algorithm.Myers, newlineTerminated = None }
+
+-- A diff of two texts, cut into tokens.
+@pub record TextDiff = {
+  old : #[String],
+  new : #[String],
+  ops : [DiffOp],
+  newlineTerminated : Bool,
+  algorithm : Algorithm
+}
+
+-- Each token as a small number, the same for equal tokens on either side, so
+-- that the algorithms compare numbers. The crate does this only for long
+-- texts; the answers are the same either way.
+fun identify (old : #[String]) (new : #[String]) =
+  let assign = \acc tok ->
+    match acc with
+    | (m, ids) ->
+        match H.lookup tok m with
+        | Just id -> (m, V.pushBack ids id)
+        | None -> (H.insert tok (H.size m) m, V.pushBack ids (H.size m))
+  in
+  match V.foldl assign (H.empty, V.empty) (V.fromArray old) with
+  | (m, oldIds) ->
+      match V.foldl assign (m, V.empty) (V.fromArray new) with
+      | (_, newIds) -> (V.toArray oldIds, V.toArray newIds)
+
+fun diffTokens (config : TextDiffConfig) (old : #[String]) (new : #[String]) newlineTerminated =
+  match identify old new with
+  | (oldIds, newIds) ->
+      let same = \i j -> arrayGet oldIds i == arrayGet newIds j in
+      let key = \ids i -> arrayGet ids i in
+      let ops = captureWith config.algorithm same (key oldIds) (key newIds) 0 (arrayLen old) 0 (arrayLen new) in
+      let terminated =
+        match config.newlineTerminated with
+        | Just b -> b
+        | None -> newlineTerminated
+      in
+      TextDiff { old = old, new = new, ops = ops, newlineTerminated = terminated, algorithm = config.algorithm }
+
+fun diffBy tokenize terminated config old new =
+  diffTokens config (V.toArray (tokenize old)) (V.toArray (tokenize new)) terminated
+
+-- `old` and `new` diffed line by line.
+@pub fun diffLines config old new = diffBy tokenizeLines True config old new
+
+-- `old` and `new` diffed word by word, whitespace runs counting as words.
+@pub fun diffWords config old new = diffBy tokenizeWords False config old new
+
+-- `old` and `new` diffed character by character.
+@pub fun diffChars config old new = diffBy tokenizeChars False config old new
+
+-- `old` and `new` diffed by UAX #29 word bounds.
+@pub fun diffUnicodeWords config old new = diffBy tokenizeUnicodeWords False config old new
+
+-- `old` and `new` diffed grapheme by grapheme.
+@pub fun diffGraphemes config old new = diffBy tokenizeGraphemes False config old new
+
+-- Two lists of tokens diffed as they are.
+@pub fun diffSlices config (old : #[String]) (new : #[String]) = diffTokens config old new False
+
+@pub fun fromLines old new = diffLines textDiffConfig old new
+
+@pub fun fromWords old new = diffWords textDiffConfig old new
+
+@pub fun fromChars old new = diffChars textDiffConfig old new
+
+@pub fun fromUnicodeWords old new = diffUnicodeWords textDiffConfig old new
+
+@pub fun fromGraphemes old new = diffGraphemes textDiffConfig old new
+
+@pub fun fromSlices old new = diffSlices textDiffConfig old new
+
+-- How alike the texts are, from 0 to 1.
+@pub fun ratio (d : TextDiff) = getDiffRatio d.ops (arrayLen d.old) (arrayLen d.new)
+
+-- The tokens one operation covers, with their tags.
+@pub fun iterChanges (d : TextDiff) op = changesOf op d.old d.new
+
+-- Every token of both texts, in diff order.
+@pub fun iterAllChanges (d : TextDiff) = V.concatMap (\op -> changesOf op d.old d.new) d.ops
+
+-- The operations in hunks with `n` tokens of context.
+@pub fun groupedOps (d : TextDiff) n = groupDiffOps d.ops n
+
+-- --- close matches ----------------------------------------------------------------------
+
+fun upperSeqRatio len1 len2 =
+  let n = len1 + len2 in
+  if n == 0
+  then toFloat32 1.0
+  else toFloat32 2.0 *. toFloat32 (toFloat (if len1 < len2 then len1 else len2)) /. toFloat32 (toFloat n)
+
+-- The crate's `QuickSeqRatio`: note that it counts `seq1`'s distinct tokens,
+-- not all of them.
+fun quickRatio counts (seq : #[String]) =
+  let n = H.size counts + arrayLen seq in
+  if n == 0
+  then toFloat32 1.0
+  else
+    let step = \acc word ->
+      match acc with
+      | (available, matches) ->
+          let x =
+            match H.lookup word available with
+            | Just c -> c
+            | None -> H.getOr 0 word counts
+          in
+          (H.insert word (x - 1) available, if x > 0 then matches + 1 else matches)
+    in
+    match V.foldl step (H.empty, 0) (V.fromArray seq) with
+    | (_, matches) -> toFloat32 2.0 *. toFloat32 (toFloat matches) /. toFloat32 (toFloat n)
+
+-- `f`'s value as the crate turns a ratio into a `u32`: times 2^32 in single
+-- precision, then cut to 32 bits.
+fun score (f : Float32) =
+  let scaled = toFloat64 (f *. toFloat32 4294967296.0) in
+  let n = floor scaled in
+  if n > 4294967295 then 4294967295 else if n < 0 then 0 else n
+
+-- The `n` of `possibilities` most like `word`, best first, of those at least
+-- `cutoff` alike.
+@pub fun getCloseMatches word possibilities n (cutoff : Float32) =
+  let seq1 = V.toArray (tokenizeChars word) in
+  let counts = V.foldl (\m w -> H.insertWith (\new old -> old + 1) w 1 m) H.empty (V.fromArray seq1) in
+  let scored =
+    V.foldl
+      (\acc possibility ->
+        let seq2 = V.toArray (tokenizeChars possibility) in
+        if upperSeqRatio (arrayLen seq1) (arrayLen seq2) <. cutoff or quickRatio counts seq2 <. cutoff
+        then acc
+        else
+          let r = ratio (fromSlices seq1 seq2) in
+          if r >=. cutoff then V.pushBack acc (score r, possibility) else acc)
+      V.empty
+      possibilities
+  in
+  -- Highest score first, then the smaller string, as the crate's heap pops
+  -- `(score, Reverse(possibility))`.
+  let ordered =
+    sortBy
+      (\a b ->
+        match compare (fst b) (fst a) with
+        | Equal -> S.compare (snd a) (snd b)
+        | o -> o)
+      scored
+  in
+  V.map snd (V.take ordered n)
