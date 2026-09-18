@@ -3,4 +3,4 @@ name = "diff"
 version = "0.1.0"
 
 [dependencies]
-unicodeSegmentation = { path = "../meadow-unicode-segmentation" }
+unicodeSegmentation = { git = "https://github.com/mcdearman/meadow-unicode-segmentation" }
