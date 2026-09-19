@@ -12,13 +12,13 @@ operations, groups them into the same hunks and prints the same text.
 ## Install
 
 ```sh
-meadow add mcdearman/meadow-diff
+meadow add mcdearman/MeadowDiff
 ```
 
 ## Use
 
 ```meadow
-use diff (fromLines, unifiedDiff, unifiedDiffText, diffWordParts, Myers)
+use Diff (fromLines, unifiedDiff, unifiedDiffText, diffWordParts, Myers)
 
 def main =
   ( unifiedDiffText (unifiedDiff (fromLines "a\nb\nc\n" "a\nB\nc\n")),

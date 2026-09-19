@@ -12,21 +12,21 @@ use Std.Collections.Vector as V
 @cfg(test)
 use Std.String as S
 @cfg(test)
-use diff.Cases (cases)
+use Diff.Cases (cases)
 @cfg(test)
-use diff.CasesPlain (casesPlain)
+use Diff.CasesPlain (casesPlain)
 @cfg(test)
-use diff.Types
+use Diff.Types
 @cfg(test)
-use diff.Algorithms
+use Diff.Algorithms
 @cfg(test)
-use diff.Text
+use Diff.Text
 @cfg(test)
-use diff.Unified
+use Diff.Unified
 @cfg(test)
-use diff.Inline
+use Diff.Inline
 @cfg(test)
-use diff.Parts
+use Diff.Parts
 
 -- --- reading the cases --------------------------------------------------------------------
 

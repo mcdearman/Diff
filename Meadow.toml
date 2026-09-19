@@ -1,0 +1,6 @@
+[package]
+name = "Diff"
+version = "0.2.0"
+
+[dependencies]
+UnicodeSegmentation = { git = "https://github.com/mcdearman/MeadowUnicodeSegmentation", version = "0.2.0" }

@@ -6,9 +6,9 @@
 -- COPYRIGHT.
 
 use Std.Collections.Vector as V
-use diff.Types
-use diff.Algorithms (captureWith, getDiffRatio)
-use diff.Text (TextDiff, tokenizeUnicodeWords, tokenizeWords, tokenizeLinesAndNewlines, endsWithNewline)
+use Diff.Types
+use Diff.Algorithms (captureWith, getDiffRatio)
+use Diff.Text (TextDiff, tokenizeUnicodeWords, tokenizeWords, tokenizeLinesAndNewlines, endsWithNewline)
 
 -- One line of a replaced run, with its pieces marked: `True` for a piece that
 -- changed.

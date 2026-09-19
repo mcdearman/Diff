@@ -5,9 +5,9 @@
 -- COPYRIGHT.
 
 use Std.Collections.Vector as V
-use diff.Types
-use diff.Algorithms (captureDiffSlices)
-use diff.Text
+use Diff.Types
+use Diff.Algorithms (captureDiffSlices)
+use Diff.Text
 
 -- The runs of `source` the tokens `from` to `to` cover.
 fun remap (source : String) starts from to =

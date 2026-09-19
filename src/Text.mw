@@ -9,9 +9,9 @@ use Std.Collections.Vector as V
 use Std.Collections.HashMap as H
 use Std.String as S
 use Std.Sort (sortBy)
-use unicodeSegmentation (splitWordBounds, graphemes)
-use diff.Types
-use diff.Algorithms (captureWith, getDiffRatio, groupDiffOps)
+use UnicodeSegmentation (splitWordBounds, graphemes)
+use Diff.Types
+use Diff.Algorithms (captureWith, getDiffRatio, groupDiffOps)
 
 -- --- tokenizers -------------------------------------------------------------------------
 

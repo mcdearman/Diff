@@ -6,8 +6,8 @@
 -- COPYRIGHT.
 
 use Std.Collections.Vector as V
-use diff.Types
-use diff.Text (TextDiff, groupedOps, endsWithNewline, diffLines, textDiffConfig, TextDiffConfig)
+use Diff.Types
+use Diff.Text (TextDiff, groupedOps, endsWithNewline, diffLines, textDiffConfig, TextDiffConfig)
 
 -- How to print a text diff as a unified diff.
 @pub record UnifiedDiff = {

@@ -1,6 +1,0 @@
-[package]
-name = "diff"
-version = "0.1.0"
-
-[dependencies]
-unicodeSegmentation = { git = "https://github.com/mcdearman/meadow-unicode-segmentation", version = "0.1.0" }
