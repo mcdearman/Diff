@@ -12,7 +12,7 @@ operations, groups them into the same hunks and prints the same text.
 ## Install
 
 ```sh
-meadow add mcdearman/MeadowDiff
+meadow add mcdearman/Diff
 ```
 
 ## Use
