@@ -27,6 +27,7 @@ use Std.Collections.Vector as V
   | ChangeTag.Insert -> "+"
 
 -- What an operation does.
+@derive(PartialEq)
 @pub data DiffTag = Equal | Delete | Insert | Replace
 
 -- One step of a diff, in the crate's terms.

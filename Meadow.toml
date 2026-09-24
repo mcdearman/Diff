@@ -1,6 +1,6 @@
 [package]
 name = "Diff"
-version = "0.2.0"
+version = "0.2.1"
 
 [dependencies]
 UnicodeSegmentation = { git = "https://github.com/mcdearman/UnicodeSegmentation", version = "0.2.0" }

@@ -6,6 +6,6 @@ version = 1
 [[package]]
 name = "UnicodeSegmentation"
 source = "git+https://github.com/mcdearman/UnicodeSegmentation?version=0.2.0"
-version = "0.2.0"
-rev = "8d4055797df0928c16c55eac1c0b66f080b29f01"
-tree = "6768f691b32e4154a397832b892e18596ab4687c"
+version = "0.2.1"
+rev = "33498ab064451b59be3a455dcb2ec865fe71290a"
+tree = "fcaabaabf36251e88ba26c1c0f731246fce1a193"
